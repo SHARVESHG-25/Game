@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2-Player Target Shootout</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 10px;
+    }
+    .game-container {
+      position: relative;
+      background: #1e293b;
+      border: 3px solid #334155;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      overflow: hidden;
+      width: 100%;
+      max-width: 800px;
+    }
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #0f172a;
+      padding: 12px 20px;
+      border-bottom: 2px solid #334155;
+    }
+    .player-hud {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .p1-color { color: #38bdf8; }
+    .p2-color { color: #f43f5e; }
+    .score {
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+    .timer {
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: #fbbf24;
+      background: #1e293b;
+      padding: 4px 16px;
+      border-radius: 20px;
+      border: 1px solid #475569;
+    }
+    canvas {
+      display: block;
+      background: radial-gradient(circle, #1e293b 0%, #0f172a 100%);
+      width: 100%;
+      height: 450px;
+      cursor: none;
+    }
+    .controls-hint {
+      display: flex;
+      justify-content: space-between;
+      background: #0f172a;
+      padding: 8px 20px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+      border-top: 1px solid #334155;
+    }
+    .overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(15, 23, 42, 0.85);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 15px;
+      z-index: 10;
+    }
+    .overlay h1 {
+      font-size: 2.5rem;
+      color: #f8fafc;
+      text-shadow: 0 0 10px rgba(255,255,255,0.2);
+    }
+    .btn {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 12px 28px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn:hover {
+      background: #1d4ed8;
+      transform: scale(1.05);
+    }
+  </style>
+</head>
+<body>
+
+<div class="game-container">
+  <div class="hud">
+    <div class="player-hud p1-color">
+      <span>PLAYER 1</span>
+      <span id="p1-score" class="score">0</span>
+    </div>
+    <div class="timer" id="timer">60</div>
+    <div class="player-hud p2-color" style="text-align: right;">
+      <span>PLAYER 2</span>
+      <span id="p2-score" class="score">0</span>
+    </div>
+  </div>
+
+  <canvas id="gameCanvas" width="800" height="450"></canvas>
+
+  <div class="controls-hint">
+    <span>P1: <b>WASD</b> to move, <b>SPACE</b> to shoot</span>
+    <span>P2: <b>ARROWS</b> to move, <b>ENTER</b> to shoot</span>
+  </div>
+
+  <div id="startOverlay" class="overlay">
+    <h1>2-PLAYER SHOOTOUT</h1>
+    <p style="color: #94a3b8; max-width: 400px; text-align: center;">
+      Shoot the moving targets on your opponent's side of the arena!
+    </p>
+    <button class="btn" onclick="startGame()">START GAME</button>
+  </div>
+
+  <div id="endOverlay" class="overlay" style="display: none;">
+    <h1 id="winnerText">PLAYER 1 WINS!</h1>
+    <p id="finalScores" style="color: #cbd5e1; font-size: 1.2rem;"></p>
+    <button class="btn" onclick="startGame()">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  let gameActive = false;
+  let timeLeft = 60;
+  let timerInterval;
+
+  const keys = {};
+
+  const p1 = {
+    x: 200, y: 225, radius: 15, color: '#38bdf8', score: 0,
+    speed: 6, bounds: { minX: 20, maxX: 380, minY: 20, maxY: 430 }
+  };
+
+  const p2 = {
+    x: 600, y: 225, radius: 15, color: '#f43f5e', score: 0,
+    speed: 6, bounds: { minX: 420, maxX: 780, minY: 20, maxY: 430 }
+  };
+
+  let targets = [];
+  let particles = [];
+
+  window.addEventListener('keydown', e => keys[e.code] = true);
+  window.addEventListener('keyup', e => keys[e.code] = false);
+
+  function spawnTarget() {
+    if (!gameActive) return;
+    const side = Math.random() > 0.5 ? 1 : 2; // 1 = Left, 2 = Right
+    const target = {
+      x: side === 1 ? Math.random() * 340 + 30 : Math.random() * 340 + 430,
+      y: Math.random() * 380 + 35,
+      radius: Math.random() * 10 + 12,
+      vx: (Math.random() - 0.5) * 4,
+      vy: (Math.random() - 0.5) * 4,
+      side: side,
+      points: 10
+    };
+    targets.push(target);
+  }
+
+  function createExplosion(x, y, color) {
+    for (let i = 0; i < 12; i++) {
+      particles.push({
+        x, y,
+        vx: (Math.random() - 0.5) * 6,
+        vy: (Math.random() - 0.5) * 6,
+        radius: Math.random() * 3 + 1,
+        color,
+        alpha: 1
+      });
+    }
+  }
+
+  function shoot(player, targetSide) {
+    createExplosion(player.x, player.y, player.color);
+    
+    for (let i = targets.length - 1; i >= 0; i--) {
+      const t = targets[i];
+      if (t.side === targetSide) {
+        const dist = Math.hypot(player.x - t.x, player.y - t.y);
+        if (dist < player.radius + t.radius) {
+          player.score += t.points;
+          createExplosion(t.x, t.y, '#fbbf24');
+          targets.splice(i, 1);
+          updateScores();
+          break;
+        }
+      }
+    }
+  }
+
+  function updateScores() {
+    document.getElementById('p1-score').innerText = p1.score;
+    document.getElementById('p2-score').innerText = p2.score;
+  }
+
+  function update() {
+    if (!gameActive) return;
+
+    // Player 1 Movement (WASD)
+    if (keys['KeyW'] && p1.y > p1.bounds.minY) p1.y -= p1.speed;
+    if (keys['KeyS'] && p1.y < p1.bounds.maxY) p1.y += p1.speed;
+    if (keys['KeyA'] && p1.x > p1.bounds.minX) p1.x -= p1.speed;
+    if (keys['KeyD'] && p1.x < p1.bounds.maxX) p1.x += p1.speed;
+
+    // Player 2 Movement (Arrows)
+    if (keys['ArrowUp'] && p2.y > p2.bounds.minY) p2.y -= p2.speed;
+    if (keys['ArrowDown'] && p2.y < p2.bounds.maxY) p2.y += p2.speed;
+    if (keys['ArrowLeft'] && p2.x > p2.bounds.minX) p2.x -= p2.speed;
+    if (keys['ArrowRight'] && p2.x < p2.bounds.maxX) p2.x += p2.speed;
+
+    // Player 1 Shooting
+    if (keys['Space']) {
+      shoot(p1, 2);
+      keys['Space'] = false;
+    }
+
+    // Player 2 Shooting
+    if (keys['Enter'] || keys['Numpad0']) {
+      shoot(p2, 1);
+      keys['Enter'] = false;
+      keys['Numpad0'] = false;
+    }
+
+    // Move targets
+    targets.forEach(t => {
+      t.x += t.vx;
+      t.y += t.vy;
+
+      const minX = t.side === 1 ? 20 : 420;
+      const maxX = t.side === 1 ? 380 : 780;
+
+      if (t.x - t.radius < minX || t.x + t.radius > maxX) t.vx *= -1;
+      if (t.y - t.radius < 20 || t.y + t.radius > 430) t.vy *= -1;
+    });
+
+    // Update Particles
+    particles.forEach((p, index) => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.alpha -= 0.03;
+      if (p.alpha <= 0) particles.splice(index, 1);
+    });
+
+    // Maintain Target Count
+    if (targets.length < 8 && Math.random() < 0.05) {
+      spawnTarget();
+    }
+  }
+
+  function drawCrosshair(player) {
+    ctx.strokeStyle = player.color;
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(player.x - player.radius - 5, player.y);
+    ctx.lineTo(player.x + player.radius + 5, player.y);
+    ctx.moveTo(player.x, player.y - player.radius - 5);
+    ctx.lineTo(player.x, player.y + player.radius + 5);
+    ctx.stroke();
+
+    ctx.fillStyle = player.color;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Arena Divider
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([10, 10]);
+    ctx.beginPath();
+    ctx.moveTo(400, 0);
+    ctx.lineTo(400, 450);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw Targets
+    targets.forEach(t => {
+      ctx.fillStyle = t.side === 1 ? '#f43f5e' : '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.radius * 0.5, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+
+    // Draw Particles
+    particles.forEach(p => {
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // Draw Crosshairs
+    drawCrosshair(p1);
+    drawCrosshair(p2);
+  }
+
+  function loop() {
+    update();
+    render();
+    if (gameActive) requestAnimationFrame(loop);
+  }
+
+  function startGame() {
+    p1.score = 0;
+    p2.score = 0;
+    p1.x = 200; p1.y = 225;
+    p2.x = 600; p2.y = 225;
+    timeLeft = 60;
+    targets = [];
+    particles = [];
+    
+    updateScores();
+    document.getElementById('timer').innerText = timeLeft;
+    document.getElementById('startOverlay').style.display = 'none';
+    document.getElementById('endOverlay').style.display = 'none';
+
+    gameActive = true;
+
+    for (let i = 0; i < 6; i++) spawnTarget();
+
+    clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      timeLeft--;
+      document.getElementById('timer').innerText = timeLeft;
+      if (timeLeft <= 0) endGame();
+    }, 1000);
+
+    requestAnimationFrame(loop);
+  }
+
+  function endGame() {
+    gameActive = false;
+    clearInterval(timerInterval);
+
+    const winnerText = document.getElementById('winnerText');
+    const finalScores = document.getElementById('finalScores');
+
+    if (p1.score > p2.score) {
+      winnerText.innerText = "PLAYER 1 WINS!";
+      winnerText.className = "p1-color";
+    } else if (p2.score > p1.score) {
+      winnerText.innerText = "PLAYER 2 WINS!";
+      winnerText.className = "p2-color";
+    } else {
+      winnerText.innerText = "IT'S A TIE!";
+      winnerText.style.color = "#fbbf24";
+    }
+
+    finalScores.innerText = `P1: ${p1.score} PTS  |  P2: ${p2.score} PTS`;
+    document.getElementById('endOverlay').style.display = 'flex';
+  }
+</script>
+
+</body>
+</html>
